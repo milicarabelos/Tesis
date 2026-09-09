@@ -1,0 +1,16 @@
+# Recrear con Python 3.11 (no 3.12)
+conda create -n medir_inferencia python=3.11 -y
+conda activate medir_inferencia
+
+# Instalar todo
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install transformers huggingface_hub
+pip install llama-cpp-python
+
+# Test
+python -c "from llama_cpp import Llama; print('✓ OK')"
+
+pip install bitsandbytes
+pip install accelerate
+pip install sentencepiece
+pip install tiktoken
