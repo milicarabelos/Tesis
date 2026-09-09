@@ -1,0 +1,11 @@
+conda create -n rocm72 python=3.12
+pip install --pre torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/nightly/rocm7.2
+pip install -r requirements.txt
+conda install -c conda-forge cmake ninja
+export ROCM_PATH=/opt/rocm
+export HIP_PATH=$ROCM_PATH
+export CC=$ROCM_PATH/llvm/bin/clang
+export CXX=$ROCM_PATH/llvm/bin/clang++
+CMAKE_ARGS="-DGGML_HIP=on -DAMDGPU_TARGETS=gfx1201 -DCMAKE_C_COMPILER=$CC -DCMAKE_CXX_COMPILER=$CXX" \
+pip install llama-cpp-python --no-cache-dir --force-reinstall --upgrade
