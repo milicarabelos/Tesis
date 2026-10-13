@@ -42,6 +42,15 @@ def sync():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
+def load_all_raw(raw_dir):
+    """Lee todos los JSON de raw/ y junta sus filas."""
+    rows = []
+    for p in sorted(raw_dir.glob("*.json")):
+        try:
+            rows += json.loads(p.read_text()).get("rows", [])
+        except Exception as e:
+            print(f"[warn] no se pudo leer {p.name}: {e}", file=sys.stderr, flush=True)
+    return rows
 
 def rows_from_results(model_label, task, res, n_samples, load_time, eval_time):
     """Convierte el dict de resultados de lm-eval en filas (una por métrica)."""
@@ -191,17 +200,17 @@ def main():
     print(f"lm_eval {getattr(lm_eval, '__version__', '?')} | cfg={cfg}", flush=True)
     print(f"models={models}\ntasks={tasks}", flush=True)
 
-    all_rows = []
     for entry in models:
         try:
-            all_rows += evaluate_model(entry, tasks, cfg, raw_dir)
+            evaluate_model(entry, tasks, cfg, raw_dir)
         except Exception as e:  # un modelo que falla no tumba el resto
             print(f"[ERROR] {entry}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    write_excel(all_rows, out_dir / "resultados.xlsx")
+    full_rows_path = load_all_raw(raw_dir)
+    write_excel(full_rows_path, out_dir / "resultados.xlsx")
     print(f"Listo: {out_dir / 'resultados.xlsx'}", flush=True)
 
 
