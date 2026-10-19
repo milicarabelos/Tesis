@@ -14,6 +14,21 @@ OUTPUT_DIR=results \
 	python benchmarks/run_eval.py
 ```
 
+Para repetir el experimento con otra configuración sin reutilizar los
+resultados existentes, usá `--force` con un nombre para la variante:
+
+```bash
+MODELS="meta-llama/Llama-3.1-8B Qwen/Qwen2.5-7B" \
+BENCHMARKS="boolq wic openbookqa" \
+OUTPUT_DIR=results BATCH_SIZE=auto NUM_FEWSHOT=0 APPLY_CHAT_TEMPLATE=0 \
+python benchmarks/run_eval.py --force auto_batch
+```
+
+Esto guarda la ejecución en `results_autobatch/` y genera
+`results_autobatch/resultados_autobatch.xlsx`. El nombre se puede cambiar
+libremente; los caracteres no válidos para un nombre de archivo se reemplazan
+por `_`, y esos `_` se quitan del nombre de la variante.
+
 ### Configuraciones
 
 `run_eval.py` se controla con variables de entorno. Estas son todas las configuraciones disponibles:
@@ -55,6 +70,15 @@ OUTPUT_DIR=results \
 	- Default: sin límite (usa todos los ejemplos)
 	- Útil para smoke tests rápidos.
 	- Ejemplo: `LIMIT=50`
+
+### Argumentos
+
+- `--force NAME`: crea una variante independiente usando
+  `<OUTPUT_DIR>_<NAME>` y `resultados_<NAME>.xlsx`. Los guiones bajos del nombre
+  se quitan, por lo que `--force auto_batch` usa `results_autobatch/` y
+  `resultados_autobatch.xlsx`. También ignora y reemplaza los JSON incrementales
+  existentes de esa variante, por lo que permite repetir una ejecución aunque
+  la carpeta ya exista.
 
 Notas útiles:
 

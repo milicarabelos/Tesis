@@ -15,7 +15,12 @@ Variables de entorno (las define el sbatch):
   DTYPE         default bfloat16 (se ignora si el model_args ya trae dtype=)
   APPLY_CHAT_TEMPLATE  "1" para activarlo (default 0)
   LIMIT         nº de ejemplos por tarea, solo para smoke tests (default: todos)
+
+Argumentos:
+  --force NAME  ejecuta una nueva variante en <OUTPUT_DIR>_<NAME> y la guarda
+                como resultados_<NAME>.xlsx
 """
+import argparse
 import gc
 import json
 import os
@@ -83,10 +88,16 @@ def rows_from_results(model_label, task, res, n_samples, load_time, eval_time):
     return rows
 
 
-def evaluate_model(entry, tasks, cfg, raw_dir):
+def evaluate_model(entry, tasks, cfg, raw_dir, force=False):
     label = entry
     raw_path = raw_dir / f"{slug(label)}.json"
-    done = json.loads(raw_path.read_text()) if raw_path.exists() else {"rows": [], "tasks_done": []}
+    done = (
+        {"rows": [], "tasks_done": []}
+        if force
+        else json.loads(raw_path.read_text())
+        if raw_path.exists()
+        else {"rows": [], "tasks_done": []}
+    )
 
     pending = [t for t in tasks if t not in done["tasks_done"]]
     if not pending:
@@ -182,11 +193,26 @@ def write_excel(rows, path):
                 ws.column_dimensions[col[0].column_letter].width = min(width + 2, 60)
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--force",
+        metavar="NAME",
+        help="ejecuta una variante nueva en <OUTPUT_DIR>_<NAME>",
+    )
+    args = parser.parse_args()
+
     models = os.environ["MODELS"].split()
     tasks = os.environ["BENCHMARKS"].split()
     out_dir = Path(os.environ.get("OUTPUT_DIR", "results"))
+    output_suffix = slug(args.force).replace("_", "") if args.force else None
+    if output_suffix:
+        out_dir = out_dir.parent / f"{out_dir.name}_{output_suffix}"
+    excel_name = f"resultados_{output_suffix}.xlsx" if output_suffix else "resultados.xlsx"
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
+    if args.force:
+        for raw_path in raw_dir.glob("*.json"):
+            raw_path.unlink()
 
     limit = os.environ.get("LIMIT")
     cfg = {
@@ -202,7 +228,7 @@ def main():
 
     for entry in models:
         try:
-            evaluate_model(entry, tasks, cfg, raw_dir)
+            evaluate_model(entry, tasks, cfg, raw_dir, force=bool(args.force))
         except Exception as e:  # un modelo que falla no tumba el resto
             print(f"[ERROR] {entry}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             gc.collect()
@@ -210,8 +236,8 @@ def main():
                 torch.cuda.empty_cache()
 
     full_rows_path = load_all_raw(raw_dir)
-    write_excel(full_rows_path, out_dir / "resultados.xlsx")
-    print(f"Listo: {out_dir / 'resultados.xlsx'}", flush=True)
+    write_excel(full_rows_path, out_dir / excel_name)
+    print(f"Listo: {out_dir / excel_name}", flush=True)
 
 
 if __name__ == "__main__":
