@@ -8,7 +8,8 @@ Variables de entorno (las define el sbatch):
                   - un id/path de modelo:   meta-llama/Llama-3.1-8B-Instruct
                   - un model_args completo: pretrained=/ruta/base,peft=/ruta/adapter,load_in_4bit=True
                     (sin espacios; se reconoce porque contiene "=")
-  BENCHMARKS    nombres de tareas de lm-eval, separados por espacios (boolq wic openbookqa)
+  BENCHMARKS    nombres de tareas de lm-eval, separados por espacios (boolq wic openbookqa sqac)
+                incluye las tasks propias de benchmarks/tasks/ (ej. sqac)
   OUTPUT_DIR    carpeta de salida (default: results)
   NUM_FEWSHOT   default 0
   BATCH_SIZE    default 8 (puede ser "auto")
@@ -33,6 +34,10 @@ import pandas as pd
 import torch
 import lm_eval
 from lm_eval.api.registry import get_model
+from lm_eval.tasks import TaskManager
+
+# tasks propias (ej. sqac); se resuelve relativo al script, no al cwd
+TASKS_DIR = Path(__file__).resolve().parent / "tasks"
 
 
 def slug(s: str) -> str:
@@ -88,7 +93,7 @@ def rows_from_results(model_label, task, res, n_samples, load_time, eval_time):
     return rows
 
 
-def evaluate_model(entry, tasks, cfg, raw_dir, force=False):
+def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
     label = entry
     raw_path = raw_dir / f"{slug(label)}.json"
     done = (
@@ -126,6 +131,7 @@ def evaluate_model(entry, tasks, cfg, raw_dir, force=False):
         out = lm_eval.simple_evaluate(
             model=lm,
             tasks=[task],
+            task_manager=task_manager,
             num_fewshot=cfg["num_fewshot"],
             limit=cfg["limit"],
             apply_chat_template=cfg["chat"],
@@ -226,9 +232,10 @@ def main():
     print(f"lm_eval {getattr(lm_eval, '__version__', '?')} | cfg={cfg}", flush=True)
     print(f"models={models}\ntasks={tasks}", flush=True)
 
+    task_manager = TaskManager(include_path=str(TASKS_DIR))
     for entry in models:
         try:
-            evaluate_model(entry, tasks, cfg, raw_dir, force=bool(args.force))
+            evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=bool(args.force))
         except Exception as e:  # un modelo que falla no tumba el resto
             print(f"[ERROR] {entry}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             gc.collect()
