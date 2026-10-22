@@ -144,6 +144,7 @@ def load_hf(entry, cfg):
 
     args = simple_parse_args_string(to_model_args(entry))
     pretrained = args.pop("pretrained")
+    # si hay un adapter PEFT como Lora, se carga después de cargar el modelo base
     peft_path = args.pop("peft", None)
     tok_name = args.pop("tokenizer", pretrained)
     hflm_kwargs = {k: args.pop(k) for k in list(args) if k in HFLM_KEYS}
@@ -275,13 +276,7 @@ def rows_from_results(model_label, task, res, n_samples, load_time, eval_time, e
 def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
     label = entry
     raw_path = raw_dir / f"{slug(label)}.json"
-    done = (
-        {"rows": [], "tasks_done": []}
-        if force
-        else json.loads(raw_path.read_text())
-        if raw_path.exists()
-        else {"rows": [], "tasks_done": []}
-    )
+    done = json.loads(raw_path.read_text()) if raw_path.exists() else {"rows": [], "tasks_done": []}
 
     pending = [t for t in tasks if t not in done["tasks_done"]]
     need_perf = cfg["perf"] and not done.get("perf")
@@ -429,17 +424,21 @@ def main():
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     if args.force:
+        ## borrar los raw de la variante anterior para forzar re-evaluación
         for raw_path in raw_dir.glob("*.json"):
             raw_path.unlink()
 
     limit = os.environ.get("LIMIT")
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA no está disponible; este script requiere una GPU CUDA.")
+
     cfg = {
         "num_fewshot": int(os.environ.get("NUM_FEWSHOT", 0)),
         "batch_size": os.environ.get("BATCH_SIZE", "8"),
         "dtype": os.environ.get("DTYPE", "bfloat16"),
         "chat": os.environ.get("APPLY_CHAT_TEMPLATE", "0") == "1",
         "limit": int(limit) if limit else None,
-        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "device": "cuda",
         "perf": os.environ.get("PERF", "1") == "1",
         "perf_prompt_tokens": int(os.environ.get("PERF_PROMPT_TOKENS", 512)),
         "perf_new_tokens": int(os.environ.get("PERF_NEW_TOKENS", 128)),
@@ -449,10 +448,9 @@ def main():
     print(f"models={models}\ntasks={tasks}", flush=True)
 
     global DEVICE_MEM
-    if torch.cuda.is_available():
-        DEVICE_MEM = DeviceMemMonitor()
-        DEVICE_MEM.start()
-        print(f"[gpu] {gpu_info()} baseline={DEVICE_MEM.baseline / GB:.2f}GB", flush=True)
+    DEVICE_MEM = DeviceMemMonitor()
+    DEVICE_MEM.start()
+    print(f"[gpu] {gpu_info()} baseline={DEVICE_MEM.baseline / GB:.2f}GB", flush=True)
 
     task_manager = TaskManager(include_path=str(TASKS_DIR))
     for entry in models:
@@ -464,8 +462,7 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    if DEVICE_MEM:
-        DEVICE_MEM.stop()
+    DEVICE_MEM.stop()
     rows, perfs = load_all_raw(raw_dir)
     write_excel(rows, perfs, out_dir / excel_name)
     print(f"Listo: {out_dir / excel_name}", flush=True)
