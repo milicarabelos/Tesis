@@ -87,8 +87,11 @@ def version(pkg):
         return None
 
 
-def bnb_config(method):
-    from transformers import BitsAndBytesConfig
+def quant_config(method, awq_backend):
+    from transformers import AwqConfig, BitsAndBytesConfig
+    if method in ("rtn", "awq"):
+        # el resto de la config viene del checkpoint; esto solo elige el kernel de gptqmodel
+        return AwqConfig(bits=4, backend=awq_backend) if awq_backend else None
     if method == "bnb-nf4":
         return BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                   bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=torch.float16)
@@ -104,6 +107,12 @@ def run_one(args):
     method = args.method
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA/ROCm no disponible.")
+    for i in range(torch.cuda.device_count()):
+        free, total = torch.cuda.mem_get_info(i)
+        if (total - free) / GB > args.max_busy_gb:
+            raise RuntimeError(f"GPU {i} ya tiene {(total - free) / GB:.1f} GiB ocupados de {total / GB:.1f} GiB "
+                               "(otro proceso); las medidas de memoria no serían válidas. "
+                               "Revisá rocm-smi --showpids / nvidia-smi o usá una GPU exclusiva.")
     monitor = DeviceMemMonitor()
     monitor.start()
 
@@ -112,7 +121,7 @@ def run_one(args):
         model_id = str(Path(args.quantized_dir) / f"{args.model.rstrip('/').split('/')[-1]}-{method}")
         if not Path(model_id).is_dir():
             raise FileNotFoundError(f"{model_id} no existe; corré quantize_awq.py --model {args.model}")
-    qc = bnb_config(method)
+    qc = quant_config(method, args.awq_backend)
     t0 = time.perf_counter()
     model = AutoModelForCausalLM.from_pretrained(
         model_id, torch_dtype=torch.float16, device_map={"": 0},
@@ -122,6 +131,8 @@ def run_one(args):
     qconf = getattr(model.config, "quantization_config", None)
     qconf = None if qconf is None else json.loads(json.dumps(
         qconf if isinstance(qconf, dict) else qconf.to_dict(), default=str))
+    q_proj = model.model.layers[0].self_attn.q_proj
+    linear_impl = f"{type(q_proj).__module__}.{type(q_proj).__name__}"
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     sync()
     load_time = time.perf_counter() - t0
@@ -176,6 +187,7 @@ def run_one(args):
         "model": model_id,
         "dtype": "float16",
         "quantization_config": qconf,
+        "linear_impl": linear_impl,
         "prompt": args.prompt,
         "chat": args.chat,
         "prompt_tokens": input_ids.shape[1],
@@ -193,7 +205,7 @@ def run_one(args):
         "device_name": torch.cuda.get_device_name(0),
         "backend": f"rocm {torch.version.hip}" if torch.version.hip else f"cuda {torch.version.cuda}",
         "versions": {p: version(p) for p in ["torch", "transformers", "accelerate", "bitsandbytes",
-                                             "autoawq", "autoawq-kernels"]},
+                                             "gptqmodel", "triton", "pytorch-triton-rocm"]},
     }
     monitor.stop()
 
@@ -216,6 +228,9 @@ def main():
     p.add_argument("--chat", action="store_true", help="aplica el chat template (modelos instruct)")
     p.add_argument("--max-new-tokens", type=int, default=128)
     p.add_argument("--repeats", type=int, default=3)
+    p.add_argument("--awq-backend", help="fuerza el backend de gptqmodel para rtn/awq (ver check_awq_env.py)")
+    p.add_argument("--max-busy-gb", type=float, default=1.5,
+                   help="memoria de GPU ya ocupada al arrancar (incluye el contexto propio) a partir de la cual se aborta")
     p.add_argument("--output", default=str(Path(__file__).resolve().parent / "results" / "quant_compare.jsonl"))
     args = p.parse_args()
 
