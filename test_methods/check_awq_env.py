@@ -17,6 +17,10 @@ import time
 
 import torch
 
+# backends que transformers acepta para AWQ (según su ValueError en 5.17/5.19)
+AWQ_BACKENDS = ["auto", "gemm", "gemm_triton", "gemv", "gemv_fast", "torch_awq", "torch_fused_awq",
+                "exllama_v2", "exllama_v1", "marlin", "machete"]
+
 
 def version(pkg):
     try:
@@ -45,7 +49,7 @@ def decode_tok_s(model, tokenizer, n=16):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=True, help="checkpoint AWQ (ej. quantized/<modelo>-rtn)")
-    p.add_argument("--backends", help="lista separada por comas; default: todos los de gptqmodel.BACKEND")
+    p.add_argument("--backends", default=",".join(AWQ_BACKENDS), help="lista separada por comas")
     args = p.parse_args()
 
     print("torch", torch.__version__, "| hip", torch.version.hip, "| cuda", torch.version.cuda)
@@ -56,15 +60,18 @@ def main():
                 "optimum", "accelerate", "kernels"]:
         print(f"{pkg:>20}: {version(pkg)}")
 
-    from gptqmodel.utils.backend import BACKEND
-    from transformers import AutoModelForCausalLM, AutoTokenizer, AwqConfig
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, AwqConfig
 
-    backends = args.backends.split(",") if args.backends else [b.value for b in BACKEND]
-    print("\nbackends de gptqmodel:", backends)
+    qc = getattr(AutoConfig.from_pretrained(args.model), "quantization_config", None) or {}
+    qc = qc if isinstance(qc, dict) else qc.to_dict()
+    if qc.get("quant_method") != "awq":
+        raise ValueError(f"{args.model} no es un checkpoint AWQ (quant_method={qc.get('quant_method')}); "
+                         "pasá quantized/<modelo>-rtn o -awq")
+    backends = args.backends.split(",")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
 
     for b in backends:
-        print(f"\n--- backend={b}")
+        print(f"\n--- backend={b}", flush=True)
         try:
             model = AutoModelForCausalLM.from_pretrained(
                 args.model, dtype=torch.float16, device_map={"": 0},
