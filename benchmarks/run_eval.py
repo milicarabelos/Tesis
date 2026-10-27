@@ -147,6 +147,8 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
         n = out.get("n-samples", {}).get(task, {}).get("effective")
         done["rows"] += rows_from_results(label, task, out["results"][task], n, load_time, eval_time)
         done["tasks_done"].append(task)
+        done.pop("cfg", None)
+        done["cfg"] = cfg  # al final del JSON
         raw_path.write_text(json.dumps(done, indent=2))  # guardado incremental
         print(f"[eval] {task}: {eval_time:.1f}s", flush=True)
 
