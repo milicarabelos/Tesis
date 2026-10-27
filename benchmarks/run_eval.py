@@ -25,8 +25,9 @@ Variables de entorno (las define el sbatch):
                 micro-benchmark (default 512 / 128 / 3)
 
 Argumentos:
-  --force NAME  ejecuta una nueva variante en <OUTPUT_DIR>_<NAME> y la guarda
-                como resultados_<NAME>.xlsx
+  --exp NAME    guarda en <OUTPUT_DIR>_<NAME> y en resultados_<NAME>.xlsx
+                (retoma lo ya evaluado en esa carpeta)
+  --force       borra los raw de la carpeta de salida y re-evalúa desde cero
 """
 import argparse
 import gc
@@ -408,23 +409,28 @@ def performance_sheet(df, perfs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--force",
+        "--exp",
         metavar="NAME",
-        help="ejecuta una variante nueva en <OUTPUT_DIR>_<NAME>",
+        help="guarda los resultados en <OUTPUT_DIR>_<NAME>",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="borra los resultados previos de la carpeta de salida y re-evalúa",
     )
     args = parser.parse_args()
 
     models = os.environ["MODELS"].split()
     tasks = os.environ["BENCHMARKS"].split()
     out_dir = Path(os.environ.get("OUTPUT_DIR", "results"))
-    output_suffix = slug(args.force).replace("_", "") if args.force else None
+    output_suffix = slug(args.exp).replace("_", "") if args.exp else None
     if output_suffix:
         out_dir = out_dir.parent / f"{out_dir.name}_{output_suffix}"
     excel_name = f"resultados_{output_suffix}.xlsx" if output_suffix else "resultados.xlsx"
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
     if args.force:
-        ## borrar los raw de la variante anterior para forzar re-evaluación
+        ## borrar los raw previos para forzar re-evaluación
         for raw_path in raw_dir.glob("*.json"):
             raw_path.unlink()
 
@@ -455,7 +461,7 @@ def main():
     task_manager = TaskManager(include_path=str(TASKS_DIR))
     for entry in models:
         try:
-            evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=bool(args.force))
+            evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=args.force)
         except Exception as e:  # un modelo que falla no tumba el resto
             print(f"[ERROR] {entry}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
             gc.collect()
