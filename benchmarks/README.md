@@ -47,6 +47,7 @@ por `_`, y esos `_` se quitan del nombre de la variante.
 	- Claves que interpreta el script:
 		- `pretrained`, `tokenizer` (default: igual a `pretrained`), `peft` (adapter LoRA), `dtype`
 		- `load_in_4bit=True` / `load_in_8bit=True` → `BitsAndBytesConfig`
+		  (con 4 bits también `bnb_4bit_quant_type=nf4` y `bnb_4bit_use_double_quant=True`; sin ellos usa fp4)
 		- `max_length`, `add_bos_token`, `truncation`, `max_batch_size` → se pasan a `HFLM`
 	- Cualquier otra clave va directo a `AutoModelForCausalLM.from_pretrained`.
 	  Ejemplo: `pretrained=Qwen/Qwen2.5-7B,attn_implementation=sdpa,trust_remote_code=True`
