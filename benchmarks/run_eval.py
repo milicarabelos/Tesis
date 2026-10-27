@@ -151,8 +151,9 @@ def load_hf(entry, cfg):
     hflm_kwargs = {k: args.pop(k) for k in list(args) if k in HFLM_KEYS}
 
     dtype = getattr(torch, args.pop("dtype", cfg["dtype"]))
+    bnb_4bit = {k: args.pop(k) for k in ("bnb_4bit_quant_type", "bnb_4bit_use_double_quant") if k in args}
     if args.pop("load_in_4bit", False):
-        args["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=dtype)
+        args["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=dtype, **bnb_4bit)
     elif args.pop("load_in_8bit", False):
         args["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
     dtype_kw = "dtype" if Version(transformers.__version__) >= Version("4.56") else "torch_dtype"
