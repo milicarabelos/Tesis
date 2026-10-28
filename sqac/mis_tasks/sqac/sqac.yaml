@@ -1,0 +1,3 @@
+task: sqac
+class: !function task.SQAC
+
