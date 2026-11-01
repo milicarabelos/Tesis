@@ -46,6 +46,14 @@ from lm_eval.models.huggingface import HFLM
 from lm_eval.tasks import TaskManager
 from lm_eval.utils import simple_parse_args_string
 
+# gptqmodel guarda en un global el ImportError de dependencias opcionales (ej. llama_cpp) con su
+# traceback; si el primer import ocurre dentro de from_pretrained, ese traceback retiene el primer
+# modelo AWQ/RTN en la GPU para siempre. Importarlo acá deja ese traceback sin modelos.
+try:
+    import gptqmodel  # noqa: F401
+except ImportError:
+    pass
+
 # tasks propias (ej. sqac); se resuelve relativo al script, no al cwd
 TASKS_DIR = Path(__file__).resolve().parent / "tasks"
 
@@ -166,6 +174,14 @@ def load_hf(entry, cfg):
     model.eval()
     tokenizer = AutoTokenizer.from_pretrained(tok_name, trust_remote_code=args.get("trust_remote_code", False))
     return model, tokenizer, hflm_kwargs
+
+
+def linear_impl(model):
+    """Clase de la primera capa lineal cuantizada (ej. AwqMarlinLinear, Linear4bit): el kernel que se usó."""
+    for m in model.modules():
+        if "Linear" in type(m).__name__ and type(m) is not torch.nn.Linear:
+            return f"{type(m).__module__}.{type(m).__name__}"
+    return "torch.nn.Linear"
 
 
 def gpu_info():
@@ -300,6 +316,7 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
         "load_mem_gb": load_mem.get("mem_alloc_gb"),
         "load_peak_mem_gb": load_mem.get("peak_mem_alloc_gb"),
         "load_peak_mem_device_gb": load_mem.get("peak_mem_device_gb"),
+        "linear_impl": linear_impl(model),
     }
     print(f"model [{label}] charged in [load]:[{load_time:.1f}s] {load_extra}", flush=True)
 
