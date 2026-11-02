@@ -28,12 +28,16 @@ Argumentos:
   --exp NAME    guarda en <OUTPUT_DIR>_<NAME> y en resultados_<NAME>.xlsx
                 (retoma lo ya evaluado en esa carpeta)
   --force       borra los raw de la carpeta de salida y re-evalúa desde cero
+
+Cada modelo se evalúa en su propio subproceso, uno por vez, así la memoria de GPU de uno
+no queda ocupada ni contamina las medidas del siguiente.
 """
 import argparse
 import gc
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -45,14 +49,6 @@ import lm_eval
 from lm_eval.models.huggingface import HFLM
 from lm_eval.tasks import TaskManager
 from lm_eval.utils import simple_parse_args_string
-
-# gptqmodel guarda en un global el ImportError de dependencias opcionales (ej. llama_cpp) con su
-# traceback; si el primer import ocurre dentro de from_pretrained, ese traceback retiene el primer
-# modelo AWQ/RTN en la GPU para siempre. Importarlo acá deja ese traceback sin modelos.
-try:
-    import gptqmodel  # noqa: F401
-except ImportError:
-    pass
 
 # tasks propias (ej. sqac); se resuelve relativo al script, no al cwd
 TASKS_DIR = Path(__file__).resolve().parent / "tasks"
@@ -438,6 +434,7 @@ def main():
         action="store_true",
         help="borra los resultados previos de la carpeta de salida y re-evalúa",
     )
+    parser.add_argument("--model", help=argparse.SUPPRESS)  # uso interno: un modelo por subproceso
     args = parser.parse_args()
 
     models = os.environ["MODELS"].split()
@@ -454,9 +451,23 @@ def main():
         for raw_path in raw_dir.glob("*.json"):
             raw_path.unlink()
 
-    limit = os.environ.get("LIMIT")
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA no está disponible; este script requiere una GPU CUDA.")
+
+    if args.model is None:
+        # un subproceso por modelo, en secuencia (nunca dos a la vez en la GPU): al terminar cada
+        # proceso se libera toda su memoria. --force no se pasa porque los raw ya se borraron acá.
+        argv = [a for a in sys.argv[1:] if a != "--force"]
+        for entry in models:
+            if subprocess.run([sys.executable, __file__, *argv, "--model", entry]).returncode:
+                print(f"[ERROR] {entry}: el subproceso terminó con error", file=sys.stderr, flush=True)
+        rows, perfs = load_all_raw(raw_dir)
+        write_excel(rows, perfs, out_dir / excel_name)
+        print(f"Listo: {out_dir / excel_name}", flush=True)
+        return
+    models = [args.model]
+
+    limit = os.environ.get("LIMIT")
 
     cfg = {
         "num_fewshot": int(os.environ.get("NUM_FEWSHOT", 0)),
@@ -489,9 +500,6 @@ def main():
                 torch.cuda.empty_cache()
 
     DEVICE_MEM.stop()
-    rows, perfs = load_all_raw(raw_dir)
-    write_excel(rows, perfs, out_dir / excel_name)
-    print(f"Listo: {out_dir / excel_name}", flush=True)
 
 
 if __name__ == "__main__":
