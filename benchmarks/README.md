@@ -20,20 +20,21 @@ OUTPUT_DIR=results \
 	python benchmarks/run_eval.py
 ```
 
-Para repetir el experimento con otra configuración sin reutilizar los
-resultados existentes, usá `--force` con un nombre para la variante:
+Para correr el experimento con otra configuración en una carpeta aparte, usá
+`--exp` con un nombre para la variante:
 
 ```bash
 MODELS="meta-llama/Llama-3.1-8B Qwen/Qwen2.5-7B" \
 BENCHMARKS="boolq wic openbookqa" \
 OUTPUT_DIR=results BATCH_SIZE=auto NUM_FEWSHOT=0 APPLY_CHAT_TEMPLATE=0 \
-python benchmarks/run_eval.py --force auto_batch
+python benchmarks/run_eval.py --exp auto_batch
 ```
 
 Esto guarda la ejecución en `results_autobatch/` y genera
 `results_autobatch/resultados_autobatch.xlsx`. El nombre se puede cambiar
 libremente; los caracteres no válidos para un nombre de archivo se reemplazan
-por `_`, y esos `_` se quitan del nombre de la variante.
+por `_`, y esos `_` se quitan del nombre de la variante. Si la carpeta ya
+existe, retoma lo que falte; para re-evaluar todo desde cero, agregá `--force`.
 
 ### Configuraciones
 
@@ -101,12 +102,25 @@ por `_`, y esos `_` se quitan del nombre de la variante.
 
 ### Argumentos
 
-- `--force NAME`: crea una variante independiente usando
-  `<OUTPUT_DIR>_<NAME>` y `resultados_<NAME>.xlsx`. Los guiones bajos del nombre
-  se quitan, por lo que `--force auto_batch` usa `results_autobatch/` y
-  `resultados_autobatch.xlsx`. También ignora y reemplaza los JSON incrementales
-  existentes de esa variante, por lo que permite repetir una ejecución aunque
-  la carpeta ya exista.
+- `--exp NAME`: guarda la ejecución en `<OUTPUT_DIR>_<NAME>/` y genera
+  `resultados_<NAME>.xlsx`. Los guiones bajos del nombre se quitan, por lo que
+  `--exp auto_batch` usa `results_autobatch/` y `resultados_autobatch.xlsx`.
+  Si la carpeta ya existe, saltea los modelos/tareas ya evaluados.
+- `--force`: **borra** los `raw/*.json` de la carpeta de salida (la de `--exp`
+  si se usa) y re-evalúa todo desde cero. Se puede combinar con `--exp`.
+
+### Un subproceso por modelo
+
+El proceso principal no carga modelos: lanza `run_eval.py --model <entrada>` una vez
+por modelo, en secuencia, y al final arma el Excel con todos los `raw/*.json`.
+
+- Al terminar cada subproceso se libera toda su memoria de GPU, así un modelo no
+  contamina las medidas del siguiente (fugas, caché del allocator, estado global de
+  librerías como gptqmodel).
+- Si un modelo falla (excepción, OOM o segfault), su traceback sale por stderr, el
+  proceso principal muestra `[ERROR] <modelo>: el subproceso terminó con código N`
+  y sigue con el siguiente. Lo ya guardado en `raw/` de ese modelo se conserva.
+- `--model` es de uso interno; no hace falta pasarlo a mano.
 
 ### Métricas de inferencia y memoria
 
@@ -161,8 +175,6 @@ válido, comparar entre GPUs/fabricantes también compara el stack de software.
 
 Notas útiles:
 
-- El script detecta automáticamente dispositivo:
-	- `cuda` si hay GPU disponible (NVIDIA o AMD con ROCm)
-	- `cpu` en caso contrario
+- Requiere GPU (NVIDIA o AMD con ROCm); sin GPU, cada subproceso termina con error.
 - El tiempo de carga del modelo se mide aparte del tiempo de benchmark.
 - Si falla un modelo, el script sigue con los demás.
