@@ -44,11 +44,19 @@ import time
 from pathlib import Path
 
 import pandas as pd
-import torch
-import lm_eval
-from lm_eval.models.huggingface import HFLM
-from lm_eval.tasks import TaskManager
-from lm_eval.utils import simple_parse_args_string
+
+# torch / lm_eval se importan solo en el subproceso del modelo (import_eval_deps):
+# el proceso padre solo orquesta y arma el Excel, no necesita cargarlos.
+torch = lm_eval = HFLM = TaskManager = simple_parse_args_string = None
+
+
+def import_eval_deps():
+    global torch, lm_eval, HFLM, TaskManager, simple_parse_args_string
+    import torch
+    import lm_eval
+    from lm_eval.models.huggingface import HFLM
+    from lm_eval.tasks import TaskManager
+    from lm_eval.utils import simple_parse_args_string
 
 # tasks propias (ej. sqac); se resuelve relativo al script, no al cwd
 TASKS_DIR = Path(__file__).resolve().parent / "tasks"
@@ -190,7 +198,6 @@ def gpu_info():
     }
 
 
-@torch.inference_mode()
 def micro_benchmark(model, tokenizer, cfg):
     """Inferencia con prompt y largo de salida fijos, batch 1, greedy.
 
@@ -318,8 +325,10 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
 
     # ---- micro-benchmark de inferencia (una vez por modelo) ----
     if need_perf:
+        with torch.inference_mode():  # no como decorador: torch se importa recién en el subproceso
+            perf = micro_benchmark(model, tokenizer, cfg)
         done["perf"] = {"model": label, "load_time_s": load_time, **load_extra,
-                        **micro_benchmark(model, tokenizer, cfg)}
+                        **perf}
         raw_path.write_text(json.dumps(done, indent=2))
         print(f"[perf] {done['perf']}", flush=True)
 
@@ -451,21 +460,22 @@ def main():
         for raw_path in raw_dir.glob("*.json"):
             raw_path.unlink()
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA no está disponible; este script requiere una GPU CUDA.")
-
     if args.model is None:
         # un subproceso por modelo, en secuencia (nunca dos a la vez en la GPU): al terminar cada
         # proceso se libera toda su memoria. --force no se pasa porque los raw ya se borraron acá.
         argv = [a for a in sys.argv[1:] if a != "--force"]
         for entry in models:
-            if subprocess.run([sys.executable, __file__, *argv, "--model", entry]).returncode:
-                print(f"[ERROR] {entry}: el subproceso terminó con error", file=sys.stderr, flush=True)
+            rc = subprocess.run([sys.executable, __file__, *argv, "--model", entry]).returncode
+            if rc:
+                print(f"[ERROR] {entry}: el subproceso terminó con código {rc}", file=sys.stderr, flush=True)
         rows, perfs = load_all_raw(raw_dir)
         write_excel(rows, perfs, out_dir / excel_name)
         print(f"Listo: {out_dir / excel_name}", flush=True)
         return
-    models = [args.model]
+
+    import_eval_deps()
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA no está disponible; este script requiere una GPU CUDA.")
 
     limit = os.environ.get("LIMIT")
 
@@ -482,7 +492,7 @@ def main():
         "perf_repeats": int(os.environ.get("PERF_REPEATS", 3)),
     }
     print(f"lm_eval {getattr(lm_eval, '__version__', '?')} | cfg={cfg}", flush=True)
-    print(f"models={models}\ntasks={tasks}", flush=True)
+    print(f"model={args.model}\ntasks={tasks}", flush=True)
 
     global DEVICE_MEM
     DEVICE_MEM = DeviceMemMonitor()
@@ -490,15 +500,8 @@ def main():
     print(f"[gpu] {gpu_info()} baseline={DEVICE_MEM.baseline / GB:.2f}GB", flush=True)
 
     task_manager = TaskManager(include_path=str(TASKS_DIR))
-    for entry in models:
-        try:
-            evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=args.force)
-        except Exception as e:  # un modelo que falla no tumba el resto
-            print(f"[ERROR] {entry}: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
+    # sin try: si falla, el traceback sale por stderr y el código != 0 lo reporta el padre
+    evaluate_model(args.model, tasks, cfg, raw_dir, task_manager, force=args.force)
     DEVICE_MEM.stop()
 
 
