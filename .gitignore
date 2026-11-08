@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+# resultados y artefactos pesados
+results/
+results_*/
+**/results/
+**/results_*/
+test_methods/quantized/
+models/
+*.xlsx
+*.safetensors
+*.gguf
