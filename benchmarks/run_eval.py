@@ -20,6 +20,8 @@ Variables de entorno (las define el sbatch):
   APPLY_CHAT_TEMPLATE  "1" para activarlo (default 0)
   LIMIT         nº de ejemplos por tarea, solo para smoke tests (default: todos)
   PERF          "0" para saltear el micro-benchmark de inferencia (default 1)
+  SAVE_SAMPLES  "1" para guardar el puntaje por pregunta en raw/samples/<modelo>__<tarea>.jsonl
+                (default 0; sirve para comparaciones pareadas entre modelos)
   PERF_PROMPT_TOKENS / PERF_NEW_TOKENS / PERF_REPEATS
                 largo del prompt, tokens generados y repeticiones del
                 micro-benchmark (default 512 / 128 / 3)
@@ -294,6 +296,25 @@ def rows_from_results(model_label, task, res, n_samples, load_time, eval_time, e
     return rows
 
 
+def save_samples(out, task, path):
+    """Puntaje por pregunta (una línea por doc). Sirve para bootstrap / IC / tests
+    pareados entre modelos (mismos doc_id), sin depender del stderr agregado."""
+    samples = out.get("samples", {}).get(task)
+    if not samples:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        for s in samples:
+            rec = {
+                "doc_id": s["doc_id"],
+                "filter": s.get("filter"),
+                "target": s.get("target"),
+                "pred": s.get("filtered_resps"),
+                **{m: s[m] for m in s.get("metrics", []) if m in s},
+            }
+            f.write(json.dumps(rec, ensure_ascii=False, default=str) + "\n")
+
+
 def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
     label = entry
     raw_path = raw_dir / f"{slug(label)}.json"
@@ -349,6 +370,7 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
             numpy_random_seed=1234,
             torch_random_seed=1234,
             fewshot_random_seed=1234,
+            log_samples=cfg.get("save_samples", False),
         )
         sync()
         eval_time = time.perf_counter() - t0
@@ -361,6 +383,8 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
         }
         n = out.get("n-samples", {}).get(task, {}).get("effective")
         done["rows"] += rows_from_results(label, task, out["results"][task], n, load_time, eval_time, extra)
+        if cfg.get("save_samples"):
+            save_samples(out, task, raw_dir / "samples" / f"{slug(label)}__{task}.jsonl")
         done["tasks_done"].append(task)
         done.pop("cfg", None)
         done["cfg"] = cfg  # al final del JSON
@@ -487,6 +511,7 @@ def main():
         "limit": int(limit) if limit else None,
         "device": "cuda",
         "perf": os.environ.get("PERF", "1") == "1",
+        "save_samples": os.environ.get("SAVE_SAMPLES", "0") == "1",
         "perf_prompt_tokens": int(os.environ.get("PERF_PROMPT_TOKENS", 512)),
         "perf_new_tokens": int(os.environ.get("PERF_NEW_TOKENS", 128)),
         "perf_repeats": int(os.environ.get("PERF_REPEATS", 3)),
