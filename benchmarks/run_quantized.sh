@@ -6,11 +6,30 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 QDIR="$ROOT/test_methods/quantized"
 
-# NF4 igual que bnb-nf4 en test_methods/quant_compare.py (double quant, compute en DTYPE)
+# uso: run_quantized.sh [--model ID] [--baseline 0|1] [--only-baseline]
 BASE_MODEL="${BASE_MODEL:-meta-llama/Llama-3.1-8B}"
+BASELINE=1
+ONLY_BASELINE=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) BASE_MODEL="$2"; shift 2 ;;
+    --baseline) BASELINE="$2"; shift 2 ;;
+    --only-baseline) ONLY_BASELINE=1; shift ;;
+    *) echo "argumento desconocido: $1" >&2; exit 1 ;;
+  esac
+done
+
+NAME="${BASE_MODEL%/}"; NAME="${NAME##*/}"
+# NF4 igual que bnb-nf4 en test_methods/quant_compare.py (double quant, compute en DTYPE)
 NF4="pretrained=$BASE_MODEL,load_in_4bit=True,bnb_4bit_quant_type=nf4,bnb_4bit_use_double_quant=True"
 
-export MODELS="${MODELS:-$QDIR/Llama-3.1-8B-awq $QDIR/Llama-3.1-8B-rtn $NF4}"
+if [[ "$ONLY_BASELINE" == 1 ]]; then
+  DEFAULT_MODELS="$BASE_MODEL"
+else
+  DEFAULT_MODELS="$QDIR/$NAME-awq $QDIR/$NAME-rtn $NF4"
+  [[ "$BASELINE" == 1 ]] && DEFAULT_MODELS="$BASE_MODEL $DEFAULT_MODELS"
+fi
+export MODELS="${MODELS:-$DEFAULT_MODELS}"
 export BENCHMARKS="${BENCHMARKS:-boolq wic openbookqa sqac}"
 export OUTPUT_DIR="${OUTPUT_DIR:-$ROOT/benchmarks/results}"
 export BATCH_SIZE="${BATCH_SIZE:-8}"
