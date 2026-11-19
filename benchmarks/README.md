@@ -108,6 +108,17 @@ existe, retoma lo que falte; para re-evaluar todo desde cero, agregá `--force`.
   Si la carpeta ya existe, saltea los modelos/tareas ya evaluados.
 - `--force`: **borra** los `raw/*.json` de la carpeta de salida (la de `--exp`
   si se usa) y re-evalúa todo desde cero. Se puede combinar con `--exp`.
+- `--redo TASK [TASK ...]`: saca solo esas tareas de los `raw/*.json` de la carpeta
+  de salida (sus filas y su entrada en `tasks_done`) y las vuelve a evaluar. El resto
+  de las tareas y el micro-benchmark (`perf`) se conservan. Sirve cuando cambia una
+  tarea, por ejemplo después de agregar precision y recall a SQAC:
+
+  ```bash
+  python benchmarks/run_eval.py --exp quantized --redo sqac
+  ```
+
+  Usalo **una sola vez**: si se corta a la mitad, retomá corriendo el mismo comando
+  **sin** `--redo`. Si lo volvés a pasar, borra también lo que ya se re-evaluó.
 
 ### Un subproceso por modelo
 
@@ -159,7 +170,8 @@ Memoria (en GB, sumada entre GPUs), medida en la carga, en el micro-benchmark y 
 
 Los `raw/*.json` guardan las filas por tarea (`rows`) y el micro-benchmark (`perf`).
 Los raws generados con versiones anteriores del script no tienen las columnas nuevas;
-para obtenerlas hay que re-correr con `--force`.
+para obtenerlas hay que re-correr con `--force`, o con `--redo <tarea>` si solo
+cambió una tarea.
 
 ### NVIDIA y ROCm
 
