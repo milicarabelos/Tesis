@@ -311,6 +311,11 @@ def evaluate_model(entry, tasks, cfg, raw_dir, task_manager, force=False):
     sync()
     t0 = time.perf_counter()
     model, tokenizer, hflm_kwargs = load_hf(entry, cfg)
+    # algunos modelos (ej. Qwen3) traen max_new_tokens en generation_config.json; transformers lo
+    # prioriza sobre el max_length que arma lm-eval con max_gen_toks de la tarea, y la generación
+    # deja de cortar en el límite de la tarea. Sin él, el límite es el mismo para todos los modelos.
+    if getattr(model, "generation_config", None) is not None:
+        model.generation_config.max_new_tokens = None
     lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=cfg["batch_size"], **hflm_kwargs)
     sync()
     load_time = time.perf_counter() - t0
