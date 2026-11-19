@@ -28,6 +28,10 @@ Argumentos:
   --exp NAME    guarda en <OUTPUT_DIR>_<NAME> y en resultados_<NAME>.xlsx
                 (retoma lo ya evaluado en esa carpeta)
   --force       borra los raw de la carpeta de salida y re-evalúa desde cero
+  --redo TASK [TASK ...]
+                borra solo esas tareas de los raw de la carpeta de salida y las vuelve a
+                evaluar (ej. --redo sqac después de cambiar sus métricas). Usarlo una sola
+                vez: si se corta a la mitad, se retoma corriendo de nuevo SIN --redo
 
 Cada modelo se evalúa en su propio subproceso, uno por vez, así la memoria de GPU de uno
 no queda ocupada ni contamina las medidas del siguiente.
@@ -448,6 +452,13 @@ def main():
         action="store_true",
         help="borra los resultados previos de la carpeta de salida y re-evalúa",
     )
+    parser.add_argument(
+        "--redo",
+        nargs="+",
+        metavar="TASK",
+        default=[],
+        help="borra esas tareas de los raw existentes y las vuelve a evaluar",
+    )
     parser.add_argument("--model", help=argparse.SUPPRESS)  # uso interno: un modelo por subproceso
     args = parser.parse_args()
 
@@ -464,11 +475,21 @@ def main():
         ## borrar los raw previos para forzar re-evaluación
         for raw_path in raw_dir.glob("*.json"):
             raw_path.unlink()
+    if args.redo and args.model is None:
+        # sacar esas tareas de los raw: evaluate_model las ve como pendientes y las vuelve a correr
+        for raw_path in raw_dir.glob("*.json"):
+            data = json.loads(raw_path.read_text())
+            if not set(args.redo) & set(data.get("tasks_done", [])):
+                continue
+            data["rows"] = [r for r in data.get("rows", []) if r["task"] not in args.redo]
+            data["tasks_done"] = [t for t in data["tasks_done"] if t not in args.redo]
+            raw_path.write_text(json.dumps(data, indent=2))
+            print(f"[redo] {raw_path.name}: se re-evalúa {args.redo}", flush=True)
 
     if args.model is None:
         # un subproceso por modelo, en secuencia (nunca dos a la vez en la GPU): al terminar cada
-        # proceso se libera toda su memoria. --force no se pasa porque los raw ya se borraron acá.
-        argv = [a for a in sys.argv[1:] if a != "--force"]
+        # proceso se libera toda su memoria. --force y --redo no se pasan porque ya se aplicaron acá.
+        argv = ["--exp", args.exp] if args.exp else []
         for entry in models:
             rc = subprocess.run([sys.executable, __file__, *argv, "--model", entry]).returncode
             if rc:
